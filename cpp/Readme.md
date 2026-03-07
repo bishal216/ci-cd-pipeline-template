@@ -116,7 +116,7 @@ deploy-itch:
           --userversion "${{ github.ref_name }}"
 ```
 
----
+--- 
 
 ## Platform matrix
 
