@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { name: Windows MSVC, os: windows-latest, flags: "" }
+          - { name: Linux GCC,    os: ubuntu-latest,  flags: "" }
+          - { name: Linux Clang,  os: ubuntu-latest,  flags: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ }
+          - { name: macOS,        os: macos-latest,   flags: "" }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            <PLACEHOLDER: apt packages your project needs, e.g. libsfml-dev, libsdl2-dev>
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ matrix.platform.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: deps-${{ matrix.platform.os }}-
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ${{ matrix.platform.flags }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Verify executable exists
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            test -f build/Release/<PLACEHOLDER_EXE_NAME>.exe || test -f build/<PLACEHOLDER_EXE_NAME>.exe
+          else
+            test -f build/<PLACEHOLDER_EXE_NAME>
+          fi
+
+      # -----------------------------------------------------------------------
+      # Package Windows — tag pushes only
+      # -----------------------------------------------------------------------
+      - name: Package Windows release
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p release/<PLACEHOLDER_PROJECT_NAME>
+
+          if [ -f build/Release/<PLACEHOLDER_EXE_NAME>.exe ]; then
+            cp build/Release/<PLACEHOLDER_EXE_NAME>.exe release/<PLACEHOLDER_PROJECT_NAME>/
+          else
+            cp build/<PLACEHOLDER_EXE_NAME>.exe release/<PLACEHOLDER_PROJECT_NAME>/
+          fi
+
+          # Copy assets/resources if your project has them
+          # cp -r assets release/<PLACEHOLDER_PROJECT_NAME>/
+
+          # Copy any DLLs that were built alongside the executable
+          find build -maxdepth 3 -name "*.dll" | while read dll; do
+            cp "$dll" release/<PLACEHOLDER_PROJECT_NAME>/ 2>/dev/null || true
+          done
+
+          cd release
+          7z a "../<PLACEHOLDER_PROJECT_NAME>-${{ github.ref_name }}-windows.zip" <PLACEHOLDER_PROJECT_NAME>/
+
+      - name: Upload Windows artifact
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: <PLACEHOLDER_PROJECT_NAME>-${{ github.ref_name }}-windows.zip
+
+      # -----------------------------------------------------------------------
+      # Package macOS — tag pushes only
+      # -----------------------------------------------------------------------
+      - name: Package macOS release
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          mkdir -p release/<PLACEHOLDER_PROJECT_NAME>.app/Contents/MacOS
+          mkdir -p release/<PLACEHOLDER_PROJECT_NAME>.app/Contents/Resources
+
+          cp build/<PLACEHOLDER_EXE_NAME> release/<PLACEHOLDER_PROJECT_NAME>.app/Contents/MacOS/
+
+          # Copy assets/resources if your project has them
+          # cp -r assets release/<PLACEHOLDER_PROJECT_NAME>.app/Contents/Resources/
+
+          # Copy any dylibs placed next to the binary
+          find build -maxdepth 3 -name "*.dylib" | while read lib; do
+            cp "$lib" release/<PLACEHOLDER_PROJECT_NAME>.app/Contents/MacOS/ 2>/dev/null || true
+          done
+
+          cat > release/<PLACEHOLDER_PROJECT_NAME>.app/Contents/Info.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key>             <string><PLACEHOLDER_PROJECT_NAME></string>
+            <key>CFBundleExecutable</key>        <string><PLACEHOLDER_EXE_NAME></string>
+            <key>CFBundleIdentifier</key>        <string><PLACEHOLDER: reverse-domain id, e.g. com.yourname.yourproject></string>
+            <key>CFBundleVersion</key>           <string>${{ github.ref_name }}</string>
+            <key>CFBundlePackageType</key>       <string>APPL</string>
+            <key>NSHighResolutionCapable</key>   <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          cd release
+          zip -r "../<PLACEHOLDER_PROJECT_NAME>-${{ github.ref_name }}-macos.zip" <PLACEHOLDER_PROJECT_NAME>.app/
+
+      - name: Upload macOS artifact
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: <PLACEHOLDER_PROJECT_NAME>-${{ github.ref_name }}-macos.zip
+
+  # ---------------------------------------------------------------------------
+  # GitHub Release — after all builds pass
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows zip
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+
+      - name: Download macOS zip
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "<PLACEHOLDER_PROJECT_NAME> ${{ github.ref_name }}"
+          body: |
+            ## <PLACEHOLDER_PROJECT_NAME> ${{ github.ref_name }}
+
+            ### Installation
+            **Windows:** Download and unzip `<PLACEHOLDER_PROJECT_NAME>-${{ github.ref_name }}-windows.zip`, run `<PLACEHOLDER_EXE_NAME>.exe`
+            **macOS:** Download and unzip `<PLACEHOLDER_PROJECT_NAME>-${{ github.ref_name }}-macos.zip`, open `<PLACEHOLDER_PROJECT_NAME>.app`
+            > macOS may show a security warning — right-click the app and choose Open to bypass it
+
+            <PLACEHOLDER: add any usage instructions, controls, or notes here>
+
+          files: |
+            <PLACEHOLDER_PROJECT_NAME>-${{ github.ref_name }}-windows.zip
+            <PLACEHOLDER_PROJECT_NAME>-${{ github.ref_name }}-macos.zip
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
