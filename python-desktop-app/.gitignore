@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller
+build/
+dist/
+
+# Coverage
+.coverage
+coverage.xml
+
+# Venv
+venv/
+.env
+
+# VS Code
+.vscode/
